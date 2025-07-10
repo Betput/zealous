@@ -28,8 +28,19 @@ TOKENS = {
     "XNACHO": "0xa2B36605ca53B003a1f1DEb84Fa2D66382ecdba8",
     "TKANGO": "0x46B4B1A6c462609957D17D5d8eEA12037E44ef3F",
     "TKASPER": "0x521023CA380929046365FcE28f6096263E7f8B8f",
-    "TKASPY": "0x58CE5acc313B3fDC38adf3Ad670122556A44B009"
+    "TKASPY": "0x58CE5acc313B3fDC38adf3Ad670122556A44B009",
+    "TBURT": "0x0b1793776E43D71Cc892E58849A0D2465FF36f10",
+    "TKROAK": "0x34FaB1A1c8c64c6Fe9C860fe11601a3348aa5ab8",
+    "TGHOAD": "0xd97D0AEc9CB23C3Ed3bBae393e85b542Db3226BF",
+    "TKREX": "0x3Cfaf44e511f08D2Ad1049a79E6d5701272D707F",
+    "TDOGK": "0xe8aCEFB936BEb37Bc3cdAB83E54b4941AFC2c85a"
 }
+
+# Urutan swap baru: WKAS -> TZEAL -> XZEAL -> TNACHO -> XNACHO -> TKANGO -> TKASPER -> TKASPY -> TBURT -> TKROAK -> TGHOAD -> TKREX -> TDOGK
+SWAP_SEQUENCE = [
+    "TZEAL", "XZEAL", "TNACHO", "XNACHO", "TKANGO", 
+    "TKASPER", "TKASPY", "TBURT", "TKROAK", "TGHOAD", "TKREX", "TDOGK"
+]
 
 ABI_ERC20 = json.loads('[{"constant":false,"inputs":[{"name":"_spender","type":"address"},{"name":"_value","type":"uint256"}],"name":"approve","outputs":[{"name":"","type":"bool"}],"type":"function"}, {"constant":true,"inputs":[{"name":"_owner","type":"address"}],"name":"balanceOf","outputs":[{"name":"balance","type":"uint256"}],"type":"function"}, {"constant":true,"inputs":[{"name":"_owner","type":"address"},{"name":"_spender","type":"address"}],"name":"allowance","outputs":[{"name":"remaining","type":"uint256"}],"type":"function"}]')
 ABI_ROUTER = json.loads('[{"inputs":[{"internalType":"uint256","name":"amountIn","type":"uint256"},{"internalType":"uint256","name":"amountOutMin","type":"uint256"},{"internalType":"address[]","name":"path","type":"address[]"},{"internalType":"address","name":"to","type":"address"},{"internalType":"uint256","name":"deadline","type":"uint256"}],"name":"swapExactTokensForTokens","outputs":[{"internalType":"uint256[]","name":"amounts","type":"uint256[]"}],"stateMutability":"nonpayable","type":"function"}]')
@@ -142,7 +153,7 @@ def retry_transaction(console, w3, account, transaction, tx_type, max_retries=5,
     return False, None
 
 def wrap_kas(console, w3, account, amount_in_kas, idx, total_wallets):
-    console.print(Panel(f"📦 [bold]LANGKAH 1 dari 8[/bold]: WRAP {amount_in_kas} KAS -> WKAS", style="cyan"))
+    console.print(Panel(f"📦 [bold]LANGKAH 1[/bold]: WRAP {amount_in_kas} KAS -> WKAS", style="cyan"))
     wkas_contract = w3.eth.contract(address=Web3.to_checksum_address(TOKENS["WKAS"]), abi=ABI_WKAS)
     console.print(f"  [cyan]-> Using WKAS contract: {TOKENS['WKAS']} for deposit[/cyan]")
     amount_in_wei = w3.to_wei(amount_in_kas, 'ether')
@@ -177,12 +188,65 @@ def wrap_kas(console, w3, account, amount_in_kas, idx, total_wallets):
     console.print(f"[red]Wallet {idx}/{total_wallets}: {account.address[:8]}...{account.address[-8:]} - Wrap KAS - Failed: {result}[/red]")
     return False, str(result)
 
+def unwrap_wkas(console, w3, account, idx, total_wallets):
+    console.print(Panel(f"📦 [bold]LANGKAH TERAKHIR[/bold]: UNWRAP WKAS -> KAS", style="cyan"))
+    wkas_contract = w3.eth.contract(address=Web3.to_checksum_address(TOKENS["WKAS"]), abi=ABI_WKAS)
+    console.print(f"  [cyan]-> Using WKAS contract: {TOKENS['WKAS']} for withdraw[/cyan]")
+    
+    # Get WKAS balance
+    try:
+        wkas_balance = wkas_contract.functions.balanceOf(account.address).call()
+        console.print(f"  [cyan]-> Saldo WKAS: {w3.from_wei(wkas_balance, 'ether')} WKAS[/cyan]")
+        
+        if wkas_balance == 0:
+            console.print("  [yellow]⚠️  Saldo WKAS 0, melewati unwrap.[/yellow]")
+            console.print(f"[green]Wallet {idx}/{total_wallets}: {account.address[:8]}...{account.address[-8:]} - Unwrap WKAS - Success[/green]")
+            return True, None
+    except Exception as e:
+        console.print(f"[bold red]❌ Error checking WKAS balance: {e}[/bold red]")
+        console.print(f"[red]Wallet {idx}/{total_wallets}: {account.address[:8]}...{account.address[-8:]} - Unwrap WKAS - Failed: {e}[/red]")
+        return False, str(e)
+    
+    console.print("[cyan]Fetching nonce...[/cyan]")
+    nonce = wait_for_pending_tx(console, w3, account)
+    if nonce is None:
+        return False, "Timeout waiting for mempool"
+    
+    tx_params = {
+        'from': account.address,
+        'nonce': nonce,
+        'gasPrice': w3.eth.gas_price,
+        'chainId': w3.eth.chain_id
+    }
+    console.print("[cyan]Building transaction...[/cyan]")
+    transaction = wkas_contract.functions.withdraw(wkas_balance).build_transaction(tx_params)
+    console.print("[cyan]Sending transaction...[/cyan]")
+    success, result = retry_transaction(console, w3, account, transaction, "unwrap WKAS")
+    if success:
+        console.print("  [bold green]✅ BERHASIL[/bold green]\n")
+        console.print(f"[green]Wallet {idx}/{total_wallets}: {account.address[:8]}...{account.address[-8:]} - Unwrap WKAS - Success[/green]")
+        return True, None
+    console.print(f"[bold red]❌ Unwrap WKAS gagal setelah 5 attempts. Error: {result}[/bold red]")
+    console.print(f"[red]Wallet {idx}/{total_wallets}: {account.address[:8]}...{account.address[-8:]} - Unwrap WKAS - Failed: {result}[/red]")
+    return False, str(result)
+
+def get_token_balance(console, w3, account, token_key):
+    """Get balance of a specific token"""
+    try:
+        token_contract = w3.eth.contract(address=Web3.to_checksum_address(TOKENS[token_key]), abi=ABI_ERC20)
+        balance = token_contract.functions.balanceOf(account.address).call()
+        return balance
+    except Exception as e:
+        console.print(f"[bold red]❌ Error getting {token_key} balance: {e}[/bold red]")
+        return 0
+
 def swap_token(console, w3, account, from_token_key, to_token_key, amount_in_wei, step, idx, total_wallets):
-    console.print(Panel(f"🔁 [bold]LANGKAH {step} dari 8[/bold]: SWAP {from_token_key} -> {to_token_key}", style="cyan"))
+    console.print(Panel(f"🔁 [bold]LANGKAH {step}[/bold]: SWAP {from_token_key} -> {to_token_key}", style="cyan"))
     if amount_in_wei == 0:
         console.print("  [yellow]⚠️  Saldo 0, melewati swap.[/yellow]")
         console.print(f"[green]Wallet {idx}/{total_wallets}: {account.address[:8]}...{account.address[-8:]} - Swap {from_token_key} -> {to_token_key} - Success[/green]")
         return True, None
+    
     from_token_addr = Web3.to_checksum_address(TOKENS[from_token_key])
     to_token_addr = Web3.to_checksum_address(TOKENS[to_token_key])
     router_addr = Web3.to_checksum_address(ROUTER_ADDRESS)
@@ -199,6 +263,8 @@ def swap_token(console, w3, account, from_token_key, to_token_key, amount_in_wei
             console.print(f"[bold red]❌ Saldo {from_token_key} tidak cukup: {w3.from_wei(balance, 'ether')} < {w3.from_wei(amount_in_wei, 'ether')}[/bold red]")
             console.print(f"[red]Wallet {idx}/{total_wallets}: {account.address[:8]}...{account.address[-8:]} - Swap {from_token_key} -> {to_token_key} - Failed: Insufficient {from_token_key} balance[/red]")
             return False, f"Insufficient {from_token_key} balance"
+        # Use actual balance instead of specified amount
+        amount_in_wei = balance
     except ABIFunctionNotFound as e:
         console.print(f"[bold red]❌ Error: Function 'balanceOf' not found in {from_token_key} contract ABI at {from_token_addr}.[/bold red]")
         console.print("[yellow]Possible cause: The contract is not ERC20-compliant or the address is incorrect.[/yellow]")
@@ -250,52 +316,4 @@ def swap_token(console, w3, account, from_token_key, to_token_key, amount_in_wei
         return True, None
     console.print(f"[bold red]❌ Swap gagal setelah 5 attempts. Error: {result}[/bold red]")
     console.print(f"[yellow]Possible causes: Insufficient liquidity, invalid swap path ({from_token_key} -> {to_token_key}), or contract issue.[/yellow]")
-    console.print(f"[red]Wallet {idx}/{total_wallets}: {account.address[:8]}...{account.address[-8:]} - Swap {from_token_key} -> {to_token_key} - Failed: {result}[/red]")
-    return False, str(result)
-
-def swap_to_wkas(console, w3, account, from_token_key, amount_in_wei, idx, total_wallets):
-    console.print(Panel(f"🔁 [bold]LANGKAH 8a dari 8[/bold]: SWAP {from_token_key} -> WKAS", style="cyan"))
-    if amount_in_wei == 0:
-        console.print("  [yellow]⚠️  Saldo 0, melewati swap ke WKAS.[/yellow]")
-        console.print(f"[green]Wallet {idx}/{total_wallets}: {account.address[:8]}...{account.address[-8:]} - Swap {from_token_key} -> WKAS - Success[/green]")
-        return True, None
-    from_token_addr = Web3.to_checksum_address(TOKENS[from_token_key])
-    wkas_addr = Web3.to_checksum_address(TOKENS["WKAS"])
-    router_addr = Web3.to_checksum_address(ROUTER_ADDRESS)
-    my_address = account.address
-    from_token_contract = w3.eth.contract(address=from_token_addr, abi=ABI_ERC20)
-    router_contract = w3.eth.contract(address=router_addr, abi=ABI_ROUTER)
-    console.print(f"  [cyan]-> Using router: {ROUTER_ADDRESS} for swap {from_token_key} -> WKAS[/cyan]")
-    
-    try:
-        balance = from_token_contract.functions.balanceOf(my_address).call()
-        balance_text = Text.assemble(("  -> Saldo ", "white"), (f"{w3.from_wei(balance, 'ether')}", "bold magenta"), (f" {from_token_key} yang akan di-swap ke WKAS", "white"))
-        console.print(balance_text)
-        if balance < amount_in_wei:
-            console.print(f"[bold red]❌ Saldo {from_token_key} tidak cukup: {w3.from_wei(balance, 'ether')} < {w3.from_wei(amount_in_wei, 'ether')}[/bold red]")
-            console.print(f"[red]Wallet {idx}/{total_wallets}: {account.address[:8]}...{account.address[-8:]} - Swap {from_token_key} -> WKAS - Failed: Insufficient {from_token_key} balance[/red]")
-            return False, f"Insufficient {from_token_key} balance"
-    except ABIFunctionNotFound as e:
-        console.print(f"[bold red]❌ Error: Function 'balanceOf' not found in {from_token_key} contract ABI at {from_token_addr}.[/bold red]")
-        console.print("[yellow]Possible cause: The contract is not ERC20-compliant or the address is incorrect.[/yellow]")
-        console.print(f"[red]Wallet {idx}/{total_wallets}: {account.address[:8]}...{account.address[-8:]} - Swap {from_token_key} -> WKAS - Failed: {e}[/red]")
-        return False, str(e)
-    
-    nonce = wait_for_pending_tx(console, w3, account)
-    if nonce is None:
-        console.print(f"[red]Wallet {idx}/{total_wallets}: {account.address[:8]}...{account.address[-8:]} - Swap {from_token_key} -> WKAS - Failed: Timeout waiting for mempool[/red]")
-        return False, "Timeout waiting for mempool"
-    
-    try:
-        allowance = from_token_contract.functions.allowance(my_address, router_addr).call()
-        console.print(f"  [cyan]-> Current allowance for {from_token_key}: {w3.from_wei(allowance, 'ether')} {from_token_key}[/cyan]")
-        if allowance < amount_in_wei:
-            console.print("  [magenta]-> Menyetujui (Approve) token untuk swap ke WKAS...[/magenta]")
-            approve_txn = from_token_contract.functions.approve(router_addr, amount_in_wei).build_transaction({
-                'from': my_address,
-                'nonce': nonce,
-                'gasPrice': w3.eth.gas_price,
-                'chainId': w3.eth.chain_id
-            })
-            success, result = retry_transaction(console, w3, account, approve_txn, "approve token for swap to WKAS")
-    
+    console.print(f"[red]Wallet {idx}/{total_wallets}: {account.address[:8]}...{account.address[-8:]} - Swap {from_tok
